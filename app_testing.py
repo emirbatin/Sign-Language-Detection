@@ -70,8 +70,7 @@ def test_app(model, actions):
                     predictions.append(np.argmax(res))
             else:
                 # Eğer el görünmüyorsa
-                predictions.append(len(actions) - 1)  #"No Sign"
-                sentence = ["No Sign"]
+                predictions.append(len(actions) - 1)
 
             # Son 10 tahmin arasında benzersiz bir tahmin varsa ve en yüksek tahmin belirlenen eşik değerini aşıyorsa
             if len(predictions) > 0 and len(res) > 0 and np.unique(predictions[-10:])[0] == np.argmax(res):
