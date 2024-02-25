@@ -8,7 +8,7 @@ import tensorflow as tf
 DATA_PATH = os.path.join("MP_Data")
 
 #Harketlerimizi tespit etmeye çalışacak
-actions = np.array(['hello','thanks','howareyou'])
+actions = np.array(['konnichiwa', 'arigatou', 'gomen', 'suki', 'nani', 'daijoubu', 'namae', 'genki'])
 
 #30 Video değerinde verilerimiz olacak
 no_sequences = 30
