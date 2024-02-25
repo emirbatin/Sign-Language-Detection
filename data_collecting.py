@@ -20,7 +20,7 @@ from  action_detection_model import actions, no_sequences
 # Veri toplamak için dizinleri oluştur
 def create_directories(actions):
     DATA_PATH = os.path.join("MP_Data")
-    no_sequences = 5
+    no_sequences = 30
 
     for action in actions:
         for sequence in range(no_sequences):
@@ -108,6 +108,7 @@ def collecting_data():
                 labels.append(action)     # Etiketleri listeye ekle
 
                 sequence_index += 1
+                
 
             print(f"Recording for {action} completed. Press space to start collecting frames for the next word.")
 

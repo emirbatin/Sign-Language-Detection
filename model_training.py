@@ -2,15 +2,19 @@ import sys
 sys.path.append("./models/action_recognition_model.py")
 import sys
 sys.path.append("./models/action_detection_model.py")
+import sys
 import os
 import numpy as np
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-from tensorflow.keras.callbacks import TensorBoard
-import tensorflow as tf
+from tensorflow.keras.layers import Conv1D, MaxPooling1D, LSTM, Dense, BatchNormalization
+from tensorflow.keras.callbacks import TensorBoard, EarlyStopping
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras import regularizers
+
 from action_detection_model import actions, no_sequences, sequence_length, DATA_PATH
+
 
 # Model eğitimini gerçekleştiren fonksiyon
 def train_model():
@@ -40,21 +44,34 @@ def train_model():
     # TensorBoard geri çağrısını tanımla
     log_dir = os.path.join('Logs')
     tb_callback = TensorBoard(log_dir=log_dir)
+    early_stopping_callback = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
 
     # Modeli oluştur
+
+    optimizer = Adam(learning_rate=0.001)
+
     model = Sequential()
-    model.add(LSTM(64, return_sequences=True, activation='relu', input_shape=(30, 2172)))
+    model.add(Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(30, 2172)))
+    model.add(BatchNormalization())
+    model.add(MaxPooling1D(pool_size=2))
+    model.add(Conv1D(filters=128, kernel_size=3, activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPooling1D(pool_size=2))
+    model.add(Conv1D(filters=256, kernel_size=3, activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPooling1D(pool_size=2))
     model.add(LSTM(128, return_sequences=True, activation='relu'))
-    model.add(LSTM(64, return_sequences=False, activation='relu'))
-    model.add(Dense(64, activation='relu'))
-    model.add(Dense(32, activation='relu'))
+    model.add(LSTM(128, return_sequences=False, activation='relu'))
+    model.add(Dense(128, activation='relu', kernel_regularizer=regularizers.l2(0.01)))
+    model.add(Dense(64, activation='relu', kernel_regularizer=regularizers.l2(0.01)))
     model.add(Dense(actions.shape[0], activation='softmax'))
 
+
     # Modeli derle
-    model.compile(optimizer='Adam', loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
 
     # Modeli eğit
-    model.fit(X_train, y_train, epochs=1000, callbacks=[tb_callback])
+    model.fit(X_train, y_train, epochs=1000, callbacks=[early_stopping_callback, tb_callback], validation_data=(X_test, y_test))
 
     # Model özetini görüntüle
     model.summary()
@@ -90,7 +107,7 @@ def train_model():
     
 if __name__ == "__main__":
     # Örnek hareketler, veri yolu ve diğer parametreleri ayarla
-    actions = np.array(['hello', 'thanks', 'howareyou'])
+    actions = np.array(['konnichiwa', 'arigatou', 'gomen', 'suki', 'nani', 'daijoubu', 'namae', 'genki'])
     DATA_PATH = os.path.join("MP_Data")
     no_sequences = 30
     sequence_length = 30

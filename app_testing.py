@@ -6,7 +6,7 @@ sys.path.append("./utils/mediapipe_utils.py")
 import sys
 sys.path.append("./utils/model_utils.py")
 
-from utils.mediapipe_utils import mediapipe_detection, draw_landmarks, mp_holistic
+from utils.mediapipe_utils import mediapipe_detection, draw_landmarks
 from utils.model_utils import extract_keypoints
 
 import os
@@ -101,7 +101,7 @@ def test_app(model, actions):
 if __name__ == "__main__":
     # Model dosya yolu ve hareket etiketleri tanımlanır
     model_file_path = 'ML_Models/action.keras'
-    actions = np.array(['hello', 'thanks', 'howareyou'])
+    actions = np.array(['konnichiwa', 'arigatou', 'gomen', 'suki', 'nani', 'daijoubu', 'namae', 'genki'])
 
     # Test uygulaması başlatılır ve model yüklenir
     test_app(load_model(model_file_path))
