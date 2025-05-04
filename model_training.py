@@ -1,115 +1,142 @@
-import sys
-sys.path.append("./models/action_recognition_model.py")
-import sys
-sys.path.append("./models/action_detection_model.py")
-import sys
+# model_training.py
 import os
 import numpy as np
 from sklearn.model_selection import train_test_split
+import tensorflow as tf
 from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv1D, MaxPooling1D, LSTM, Dense, BatchNormalization
 from tensorflow.keras.callbacks import TensorBoard, EarlyStopping
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras import regularizers
 
-from action_detection_model import actions, no_sequences, sequence_length, DATA_PATH
+# MacOS M2 optimizasyonları
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # TensorFlow uyarı mesajlarını azalt
 
+# Modülleri içe aktar
+from config import Config
+from models.action_detection_model import actions, no_sequences, sequence_length, DATA_PATH, create_model
 
-# Model eğitimini gerçekleştiren fonksiyon
 def train_model():
+    """Model eğitimini gerçekleştirir"""
+    print("=== Model Eğitimi Başlıyor ===")
+    
     # Hareketleri etiketlere atama yapacak bir sözlük oluştur
-    label_map = {label:num for num, label in enumerate(actions)}
+    label_map = {label: num for num, label in enumerate(Config.ACTIONS)}
 
     sequences, labels = [], []
 
     # Veri setinden özellikleri ve etiketleri çıkar
-    for action in actions:
-        for sequence in range(no_sequences):
+    for action in Config.ACTIONS:
+        print(f"'{action}' hareketi için veri yükleniyor...")
+        for sequence in range(Config.NO_SEQUENCES):
             window = []
-            for frame_num in range(sequence_length):
-                res = np.load(os.path.join(DATA_PATH, action, str(sequence), "{}.npy".format(frame_num)))
-                window.append(res)
+            for frame_num in range(Config.SEQUENCE_LENGTH):
+                npy_path = os.path.join(Config.DATA_PATH, action, str(sequence), f"{frame_num}.npy")
+                if os.path.exists(npy_path):
+                    res = np.load(npy_path)
+                    window.append(res)
+                else:
+                    print(f"Uyarı: {npy_path} dosyası bulunamadı, atlanıyor.")
+            
+            if len(window) == Config.SEQUENCE_LENGTH:
+                sequences.append(window)
+                labels.append(label_map[action])
+            else:
+                print(f"Uyarı: {action} eyleminin {sequence} dizisi eksik kare içeriyor, atlanıyor.")
 
-            sequences.append(window)
-            labels.append(label_map[action])
-    
     # Özellikleri ve etiketleri numpy dizilerine dönüştür
     X = np.array(sequences)
     y = to_categorical(labels).astype(int)
-
+    
+    # Veri seti boş mu kontrol et
+    if len(X) == 0:
+        print("Hata: Veri seti boş, eğitim yapılamıyor.")
+        return
+    
+    print(f"Veri seti yüklendi: {X.shape} özellikler, {y.shape} etiketler")
+    
     # Eğitim ve test setlerini oluştur
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.05)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=Config.TRAIN_TEST_SPLIT)
+    
+    print(f"Eğitim seti: {X_train.shape}")
+    print(f"Test seti: {X_test.shape}")
 
-    # TensorBoard geri çağrısını tanımla
+    # Dizinleri oluştur
     log_dir = os.path.join('Logs')
+    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(Config.MODEL_DIR, exist_ok=True)
+
+    # TensorBoard ve Early Stopping geri çağrılarını tanımla
     tb_callback = TensorBoard(log_dir=log_dir)
-    early_stopping_callback = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+    early_stopping_callback = EarlyStopping(
+        monitor='val_loss', 
+        patience=Config.EARLY_STOPPING_PATIENCE, 
+        restore_best_weights=True
+    )
+
+    # Optimizleyici oluştur
+    optimizer = Adam(learning_rate=Config.LEARNING_RATE)
 
     # Modeli oluştur
-
-    optimizer = Adam(learning_rate=0.001)
-
-    model = Sequential()
-    model.add(Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(30, 2172)))
-    model.add(BatchNormalization())
-    model.add(MaxPooling1D(pool_size=2))
-    model.add(Conv1D(filters=128, kernel_size=3, activation='relu'))
-    model.add(BatchNormalization())
-    model.add(MaxPooling1D(pool_size=2))
-    model.add(Conv1D(filters=256, kernel_size=3, activation='relu'))
-    model.add(BatchNormalization())
-    model.add(MaxPooling1D(pool_size=2))
-    model.add(LSTM(128, return_sequences=True, activation='relu'))
-    model.add(LSTM(128, return_sequences=False, activation='relu'))
-    model.add(Dense(128, activation='relu', kernel_regularizer=regularizers.l2(0.01)))
-    model.add(Dense(64, activation='relu', kernel_regularizer=regularizers.l2(0.01)))
-    model.add(Dense(actions.shape[0], activation='softmax'))
-
-
+    model = create_model()
+    
     # Modeli derle
-    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    model.compile(
+        optimizer=optimizer, 
+        loss='categorical_crossentropy', 
+        metrics=['categorical_accuracy']
+    )
 
     # Modeli eğit
-    model.fit(X_train, y_train, epochs=1000, callbacks=[early_stopping_callback, tb_callback], validation_data=(X_test, y_test))
+    print("\nModel eğitimi başlıyor...")
+    model.fit(
+        X_train, y_train, 
+        epochs=Config.MAX_EPOCHS, 
+        batch_size=Config.BATCH_SIZE,
+        callbacks=[early_stopping_callback, tb_callback], 
+        validation_data=(X_test, y_test)
+    )
 
     # Model özetini görüntüle
     model.summary()
 
     # Modelin test verisi üzerinde tahminlerini al
+    print("\nModel değerlendiriliyor...")
+    test_loss, test_acc = model.evaluate(X_test, y_test, verbose=1)
+    print(f"Test doğruluğu: {test_acc:.4f}")
+    
     res = model.predict(X_test)
 
     # Tahmin edilen etiketleri ve gerçek etiketleri görüntüle
-    predicted_labels = [actions[np.argmax(pred)] for pred in res]
-    true_labels = [actions[np.argmax(true)] for true in y_test]
+    predicted_labels = [Config.ACTIONS[np.argmax(pred)] for pred in res]
+    true_labels = [Config.ACTIONS[np.argmax(true)] for true in y_test]
 
-    print("Predicted Labels:", predicted_labels)
-    print("True Labels:", true_labels)
+    # Sadece ilk 10 tahmini göster
+    print("\nTahmin Örnekleri (ilk 10):")
+    for i, (pred, true) in enumerate(zip(predicted_labels, true_labels)):
+        if i < 10:
+            print(f"Örnek {i+1}: Tahmin = {pred}, Gerçek = {true}")
 
     # Eğitilmiş modeli kaydet
-    model_path = 'ML_Models/action.keras'  # 'action.keras' dosyasını saklamak için yol
-    model.save(model_path)
-    print("Keras modeli '{}' olarak kaydedildi.".format(model_path))
+    print("\nModel kaydediliyor...")
+    model.save(Config.KERAS_MODEL_PATH)
+    print(f"Keras modeli '{Config.KERAS_MODEL_PATH}' olarak kaydedildi.")
     
     # TensorFlow Lite modelini oluştur
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS, tf.lite.OpsSet.SELECT_TF_OPS]
-    converter._experimental_lower_tensor_list_ops = False
-    tflite_model = converter.convert()
+    try:
+        print("TFLite modeli oluşturuluyor...")
+        converter = tf.lite.TFLiteConverter.from_keras_model(model)
+        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS, tf.lite.OpsSet.SELECT_TF_OPS]
+        converter._experimental_lower_tensor_list_ops = False
+        tflite_model = converter.convert()
+        
+        # TensorFlow Lite model dosyasını kaydet
+        with open(Config.TFLITE_MODEL_PATH, 'wb') as f:
+            f.write(tflite_model)
+        
+        print(f"TensorFlow Lite modeli '{Config.TFLITE_MODEL_PATH}' olarak kaydedildi.")
+    except Exception as e:
+        print(f"TFLite dönüşümü sırasında hata: {e}")
     
-    # TensorFlow Lite model dosyasını kaydet
-    tflite_model_path = 'ML_Models/action.tflite'  # 'action.tflite' dosyasını saklamak için yol
-    with open(tflite_model_path, 'wb') as f:
-        f.write(tflite_model)
-    
-    print("TensorFlow Lite modeli '{}' olarak kaydedildi.".format(tflite_model_path))
+    print("\n=== Model Eğitimi Tamamlandı ===")
 
-    
 if __name__ == "__main__":
-    # Örnek hareketler, veri yolu ve diğer parametreleri ayarla
-    actions = np.array(['konnichiwa', 'arigatou', 'gomen', 'suki', 'nani', 'daijoubu', 'namae', 'genki'])
-    DATA_PATH = os.path.join("MP_Data")
-    no_sequences = 30
-    sequence_length = 30
-    # Model eğitimini başlat
     train_model()

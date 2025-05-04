@@ -1,34 +1,50 @@
-import sys
-sys.path.append("./models/action_detection_model.py")
-
+# save_to_csv.py
 import os
-import csv
 import numpy as np
-from action_detection_model import actions, no_sequences, sequence_length, DATA_PATH
-# Diğer fonksiyonları içe aktarabilirsiniz
+import pandas as pd
+from models.action_detection_model import actions, no_sequences, sequence_length, DATA_PATH
 
-# Verileri CSV dosyasına kaydetme fonksiyonu
 def save_to_csv(actions):
-    Folder = "Dataset"  # CSV dosyasının kaydedileceği klasör
-    csv_file_path = os.path.join(Folder, 'dataset.csv')
-    with open(csv_file_path, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        headers = ["Label"] + [f"Keypoint_{i}" for i in range(2172)]  # 2172, her bir çerçevedeki toplam özellik sayısı
-        writer.writerow(headers)
-
-        for action in actions:
-            for sequence in range(no_sequences):
-                for frame_num in range(sequence_length):
-                    file_path = os.path.join(DATA_PATH, action, str(sequence), f"{frame_num}.npy")
-                    keypoints = np.load(file_path)
-                    row = [action] + keypoints.tolist()
-                    writer.writerow(row)
+    """Eğitim verilerini CSV dosyasına kaydeder"""
+    csv_file_path = os.path.join(DATA_PATH, "sign_language_data.csv")
     
-    print("CSV başarıyla kaydedildi.")
-
-if __name__ == "__main__":
-    actions = np.array(['hello', 'thanks', 'howareyou'])
-    DATA_PATH = os.path.join("MP_Data")
-    no_sequences = 30
-    sequence_length = 30
-    save_to_csv(actions)
+    # Verileri toplayacak liste
+    all_data = []
+    
+    # Her hareket için verileri topla
+    for action_idx, action in enumerate(actions):
+        print(f"'{action}' verileri toplanıyor...")
+        
+        for sequence in range(no_sequences):
+            for frame_num in range(sequence_length):
+                # .npy dosya yolu
+                npy_path = os.path.join(DATA_PATH, action, str(sequence), f"{frame_num}.npy")
+                
+                if os.path.exists(npy_path):
+                    # Anahtar noktaları yükle
+                    keypoints = np.load(npy_path)
+                    
+                    # Veri satırı oluştur
+                    row_data = {
+                        'action': action,
+                        'action_id': action_idx,
+                        'sequence': sequence,
+                        'frame': frame_num
+                    }
+                    
+                    # Anahtar noktaları ekle
+                    for i, kp in enumerate(keypoints):
+                        row_data[f'keypoint_{i}'] = kp
+                    
+                    all_data.append(row_data)
+    
+    # DataFrame oluştur ve CSV'ye kaydet
+    if all_data:
+        df = pd.DataFrame(all_data)
+        df.to_csv(csv_file_path, index=False)
+        print(f"Veriler CSV'ye kaydedildi: {csv_file_path}")
+        print(f"Toplam {len(all_data)} satır veri kaydedildi.")
+        return True
+    else:
+        print("Kaydedilecek veri bulunamadı!")
+        return False

@@ -1,107 +1,260 @@
-# app_testing.py dosyası
-
-# Gerekli kütüphaneler ve modüller içe aktarılır
-import sys
-sys.path.append("./utils/mediapipe_utils.py")
-import sys
-sys.path.append("./utils/model_utils.py")
-
-from utils.mediapipe_utils import mediapipe_detection, draw_landmarks
-from utils.model_utils import extract_keypoints
-
+# app_testing.py
 import os
-from tkinter import messagebox
 import cv2
 import numpy as np
-import mediapipe as mp
-import tensorflow as tf
+import time
+import tkinter as tk
+from tkinter import messagebox
 from tensorflow.keras.models import load_model
 
+from models.action_detection_model import actions
+from utils.mediapipe_utils import mediapipe_detection, draw_landmarks, mp_holistic
+from utils.model_utils import extract_keypoints
 
-# Diğer fonksiyonları içe aktarabilirsiniz
-
-# Uygulamanın test edilmesi için bir fonksiyon tanımlanır
 def test_app(model, actions):
-    # Eğer model yoksa
+    """Eğitilmiş modeli test eder tasarımlı arayüzle gerçek zamanlı tahminler yapar"""
+    # Tk root penceresi oluştur (messagebox için gerekli)
+    root = tk.Tk()
+    root.withdraw()  # Pencereyi gizle
+    
+    # Model kontrolü
+    model_file_path = 'ML_Models/action.keras'
     if model is None:
-        # Model dosyasının varlığını kontrol et
         if not os.path.exists(model_file_path):
-            messagebox.showerror("Error", "Model file not found. Please train the model first.")
+            messagebox.showerror("Hata", "Model bulunamadı. Lütfen önce modeli eğitin.")
             return
-
+        
         # Model dosyası varsa yükle
         model = load_model(model_file_path)
-        print("Model loaded successfully.")
+        print("Model başarıyla yüklendi.")
     
-    # Gerekli değişkenler tanımlanır
+    # Gerekli değişkenler
     sequence = []
-    res = []
-    sentence = []
     predictions = []
+    sentence = []
     threshold = 0.4
-
-    # MediaPipe kütüphanesi kullanılarak el hareketlerinin algılanması için Holistic modeli başlatılır
-    mp_holistic = mp.solutions.holistic
+    
+    # Son tahmin zamanı ve animasyon için değişkenler
+    last_prediction_time = time.time()
+    highlight_effect = 0
+    fade_speed = 5  # Vurgu efekti hızı
+    prediction_cooldown = 1.0  # Tahminler arasındaki minimum süre (saniye)
+    
+    # renk paleti
+    colors = {
+        "primary": (76, 80, 213),     # Zengin mavi
+        "secondary": (243, 176, 49),  # Altın sarısı
+        "bg_dark": (32, 33, 36),      # Koyu gri
+        "bg_light": (60, 64, 67),     # Orta gri
+        "text_light": (255, 255, 255),# Beyaz
+        "accent": (32, 203, 111),     # Turkuaz
+        "warning": (66, 66, 212)      # Turuncu
+    }
+    
+    # Uygulama başlık bilgisi
+    app_title = "Isaret Dili Tanima"
+    
+    # Kamerayı başlat
+    cap = cv2.VideoCapture(1)
+    
+    # Ekran boyutlarını ayarla
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    
+    # Ekran oranını hesapla
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    # Blur efekti için kernel
+    blur_kernel = np.ones((5,5), np.float32) / 25
+    
+    # MediaPipe Holistic modeli ile birlikte kamera akışını al
     with mp_holistic.Holistic(min_detection_confidence=0.5, min_tracking_confidence=0.5) as holistic:
-        # Kamera başlatılır
-        cap = cv2.VideoCapture(0)
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
+                print("Kamera görüntüsü alınamadı.")
                 continue
-
-            # El hareketlerinin algılanması
+            
+            # Görüntüyü ayna modunda çevir
+            frame = cv2.flip(frame, 1)
+            
+            # Orijinal görüntüyü kopyala
+            original_image = frame.copy()
+            
+            # MediaPipe ile el, yüz ve poz tespiti
             image, results = mediapipe_detection(frame, holistic)
-
-            # Algılanan el hareketlerinin çizdirilmesi
+            
+            # Algılanan landmark'ları çiz
             draw_landmarks(image, results)
-
-            # Eğer el görünüyorsa
+            
+            # arka plan oluştur
+            # Modern tarzda yarı saydam katman ekle
+            overlay = image.copy()
+            
+            # Üst bilgi çubuğu
+            cv2.rectangle(overlay, (0, 0), (frame_width, 80), colors["bg_dark"], -1)
+            cv2.addWeighted(overlay, 0.8, image, 0.2, 0, image)
+            
+            # Uygulama başlığı
+            cv2.putText(image, app_title, (20, 35), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, colors["secondary"], 2, cv2.LINE_AA)
+            
+            # Tahmin paneli
+            cv2.rectangle(overlay, (frame_width-400, 100), (frame_width-50, 400), colors["bg_dark"], -1)
+            cv2.addWeighted(overlay, 0.7, image, 0.3, 0, image)
+            
+            # Tahmin paneli başlığı
+            cv2.putText(image, "TANIMA SONUCLARI", (frame_width-375, 130), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, colors["secondary"], 2, cv2.LINE_AA)
+            
+            # Alt bilgi çubuğu
+            cv2.rectangle(overlay, (0, frame_height-60), (frame_width, frame_height), colors["bg_dark"], -1)
+            cv2.addWeighted(overlay, 0.8, image, 0.2, 0, image)
+            
+            # Alt bilgi metni
+            status_text = "El hareketi tanima aktif | Cikmak icin 'q' tusuna basin"
+            cv2.putText(image, status_text, (20, frame_height-25), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors["text_light"], 1, cv2.LINE_AA)
+            
+            # Hareket tahmini
+            current_time = time.time()
             if results.left_hand_landmarks or results.right_hand_landmarks:
-                # El noktaları çıkarılır
+                # Anahtar noktaları çıkar
                 keypoints = extract_keypoints(results)
+                
+                # Diziye ekle ve son 30 kareyi tut
                 sequence.append(keypoints)
-                sequence = sequence[-30:]  # Son 30 kareyi saklar
-
-                # El hareketi dizisi oluşturulur ve model tarafından tahmin yapılır
+                sequence = sequence[-30:]
+                
+                # Dizi tam 30 kare olduğunda tahmin yap
                 if len(sequence) == 30:
-                    res = model.predict(np.expand_dims(sequence, axis=0))[0]
-                    print(actions[np.argmax(res)])
-                    predictions.append(np.argmax(res))
+                    # Model tahmini
+                    input_data = np.expand_dims(sequence, axis=0)
+                    result = model.predict(input_data)[0]
+                    
+                    # En yüksek olasılıklı sınıfı bul
+                    predicted_class_idx = np.argmax(result)
+                    predicted_class = actions[predicted_class_idx]
+                    confidence = result[predicted_class_idx]
+                    
+                    # Tahminleri kaydet
+                    predictions.append(predicted_class_idx)
+                    
+                    # Yeni bir tahmin yapıldıysa
+                    if current_time - last_prediction_time > prediction_cooldown:
+                        # Eşik değeri kontrolü
+                        if confidence > threshold:
+                            # Son 10 tahmini kontrol et
+                            if len(predictions) > 10:
+                                # En sık tekrarlanan sınıfı bul
+                                unique_classes, counts = np.unique(predictions[-10:], return_counts=True)
+                                mode_class_idx = unique_classes[np.argmax(counts)]
+                                
+                                # Tutarlı tahmini teyit et
+                                if mode_class_idx == predicted_class_idx:
+                                    # Eğer yeni bir kelime ise ekleyelim
+                                    if len(sentence) == 0 or predicted_class != sentence[-1]:
+                                        sentence.append(predicted_class)
+                                        print(f"Tahmin: {predicted_class}, Guven: {confidence:.4f}")
+                                        
+                                        # Yeni tahmin zamanını güncelle
+                                        last_prediction_time = current_time
+                                        highlight_effect = 1.0  # Vurgu efektini başlat
+            
+            # Son 3 tahmini göster
+            sentence = sentence[-3:]
+            
+            # Efekt faktörünü güncelle (zamanla azalt)
+            highlight_effect = max(0, highlight_effect - (fade_speed * (current_time - last_prediction_time)))
+            
+            # Tahmin sonuçlarını göster
+            if len(sentence) > 0:
+                # Sonuç etiketi
+                cv2.putText(image, "Algilanan Isaret:", (frame_width-375, 170), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors["text_light"], 1, cv2.LINE_AA)
+                
+                # Son tahmini göster (vurgu efektiyle)
+                result_color = colors["secondary"]
+                # Son tahminin renk geçişi (highlight_effect değerine göre)
+                if highlight_effect > 0:
+                    intensity = int(255 * highlight_effect)
+                    result_color = (intensity, intensity, 255)  # Parlayan beyaza doğru git
+                
+                # Mevcut tahmin içn büyük metin
+                cv2.putText(image, sentence[-1].upper(), (frame_width-375, 240), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 1.5, result_color, 2, cv2.LINE_AA)
+                
+                # Önceki tahminler için (daha küçük)
+                if len(sentence) > 1:
+                    prev_text = " - ".join(sentence[:-1])
+                    cv2.putText(image, f"Onceki: {prev_text}", (frame_width-375, 300), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors["text_light"], 1, cv2.LINE_AA)
             else:
-                # Eğer el görünmüyorsa
-                predictions.append(len(actions) - 1)
-
-            # Son 10 tahmin arasında benzersiz bir tahmin varsa ve en yüksek tahmin belirlenen eşik değerini aşıyorsa
-            if len(predictions) > 0 and len(res) > 0 and np.unique(predictions[-10:])[0] == np.argmax(res):
-                if res[np.argmax(res)].any() > threshold:
-                    if len(sentence) > 0:
-                        if actions[np.argmax(res)] != sentence[:1]:
-                            sentence.append(actions[np.argmax(res)])
-                    else:
-                        sentence.append(actions[np.argmax(res)])
-
-            if len(sentence) > 1:
-                sentence = sentence[-1:]
-
-            # Ekran üzerine son tahminin yazdırılması
-            cv2.rectangle(image, (0, 0), (500, 80), (245, 117, 16), -1)
-            cv2.putText(image, ' '.join(sentence), (3, 70), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (255, 255, 255), 2,
-                        cv2.LINE_AA)
-
-            # Ekran gösterimi
-            cv2.imshow('OpenCV Feed', image)
+                cv2.putText(image, "Hareket bekleniyor...", (frame_width-375, 240), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.8, colors["text_light"], 1, cv2.LINE_AA)
+            
+            # Güven çubuğu göster (eğer tahmin varsa)
+            if len(sequence) == 30 and len(sentence) > 0:
+                confidence = result[predicted_class_idx]
+                
+                # Çubuk başlangıç noktası
+                bar_x = frame_width-375
+                bar_y = 340
+                bar_width = 300
+                bar_height = 30
+                
+                # Arka plan çubuğu
+                cv2.rectangle(image, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), 
+                             colors["bg_light"], -1)
+                
+                # Güven seviyesi çubuğu
+                filled_width = int(bar_width * confidence)
+                
+                # Güven seviyesine göre renk belirle
+                bar_color = colors["warning"]  # Varsayılan turuncu
+                if confidence > 0.7:
+                    bar_color = colors["accent"]  # Yüksek güven - yeşil
+                
+                cv2.rectangle(image, (bar_x, bar_y), (bar_x + filled_width, bar_y + bar_height), 
+                             bar_color, -1)
+                
+                # Çubuk kenarı
+                cv2.rectangle(image, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), 
+                             colors["text_light"], 1)
+                
+                # Güven yüzdesi
+                cv2.putText(image, f"Guven: %{int(confidence*100)}", (bar_x + 10, bar_y + 20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors["text_light"], 1, cv2.LINE_AA)
+            
+            # Ana görüntü çerçevesi
+            cv2.rectangle(image, (10, 90), (frame_width-420, frame_height-70), colors["primary"], 2)
+            
+            # Zaman damgası
+            time_str = time.strftime("%H:%M:%S")
+            cv2.putText(image, time_str, (frame_width-150, 35), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors["text_light"], 1, cv2.LINE_AA)
+            
+            # Logo/marka alanı
+            logo_text = "ISARET AI"
+            cv2.putText(image, logo_text, (frame_width-150, frame_height-25), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, colors["secondary"], 2, cv2.LINE_AA)
+            
+            # Kamera görüntüsünü göster
+            cv2.imshow('Isaret Dili Tanima', image)
+            
+            # Çıkış kontrolü
             if cv2.waitKey(10) & 0xFF == ord('q'):
                 break
-
-        # Kamera serbest bırakılır ve pencereler kapatılır
+        
+        # Kamerayı serbest bırak ve pencereleri kapat
         cap.release()
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    # Model dosya yolu ve hareket etiketleri tanımlanır
+    # Modeli yükle
     model_file_path = 'ML_Models/action.keras'
-    actions = np.array(['konnichiwa', 'arigatou', 'gomen', 'suki', 'nani', 'daijoubu', 'namae', 'genki'])
-
-    # Test uygulaması başlatılır ve model yüklenir
-    test_app(load_model(model_file_path))
+    model = load_model(model_file_path) if os.path.exists(model_file_path) else None
+    
+    # Test uygulamasını başlat
+    test_app(model, actions)
